@@ -1,6 +1,6 @@
 import React from 'react';
 import { FilterState } from '../types/dashboard';
-import { Filter, RotateCcw } from 'lucide-react';
+import { Filter, RotateCcw, Zap } from 'lucide-react';
 
 interface SidebarFiltersProps {
   filters: FilterState;
@@ -15,6 +15,7 @@ interface SidebarFiltersProps {
     maxDate: string;
   };
   onReset: () => void;
+  onApplyPreset: (presetName: string) => void;
 }
 
 export const SidebarFilters: React.FC<SidebarFiltersProps> = ({
@@ -22,6 +23,7 @@ export const SidebarFilters: React.FC<SidebarFiltersProps> = ({
   setFilters,
   uniqueValues,
   onReset,
+  onApplyPreset,
 }) => {
   const handleChange = (key: keyof FilterState, value: string) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -52,6 +54,40 @@ export const SidebarFilters: React.FC<SidebarFiltersProps> = ({
             Reset
           </button>
         )}
+      </div>
+
+      {/* Quick Action Presets (User Enhancement) */}
+      <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-700 mb-2">
+          <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
+          <span>Quick Investigation Presets</span>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <button
+            onClick={() => onApplyPreset('nagpur_dip')}
+            className="text-[10px] text-left px-2 py-1 bg-white hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 border border-slate-200 rounded text-slate-600 font-medium transition-colors"
+          >
+            🔴 Nagpur Dip
+          </button>
+          <button
+            onClick={() => onApplyPreset('tier3')}
+            className="text-[10px] text-left px-2 py-1 bg-white hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 border border-slate-200 rounded text-slate-600 font-medium transition-colors"
+          >
+            🏢 Tier-3 Deep Dive
+          </button>
+          <button
+            onClick={() => onApplyPreset('whatsapp')}
+            className="text-[10px] text-left px-2 py-1 bg-white hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 border border-slate-200 rounded text-slate-600 font-medium transition-colors"
+          >
+            💬 WhatsApp Channel
+          </button>
+          <button
+            onClick={() => onApplyPreset('delivery')}
+            className="text-[10px] text-left px-2 py-1 bg-white hover:bg-teal-50 hover:text-teal-700 hover:border-teal-300 border border-slate-200 rounded text-slate-600 font-medium transition-colors"
+          >
+            🚚 Delivery Category
+          </button>
+        </div>
       </div>
 
       <div className="space-y-4 text-xs">

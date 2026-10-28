@@ -91,6 +91,58 @@ export const App: React.FC = () => {
     });
   };
 
+  // Quick Presets Handler
+  const handleApplyPreset = (presetName: string) => {
+    switch (presetName) {
+      case 'nagpur_dip':
+        setFilters({
+          startDate: '2026-07-10',
+          endDate: '2026-07-27',
+          cityTier: 'All',
+          city: 'Nagpur',
+          language: 'All',
+          category: 'All',
+          channel: 'All',
+        });
+        break;
+      case 'tier3':
+        setFilters({
+          startDate: uniqueValues.minDate,
+          endDate: uniqueValues.maxDate,
+          cityTier: 'Tier-3',
+          city: 'All',
+          language: 'All',
+          category: 'All',
+          channel: 'All',
+        });
+        break;
+      case 'whatsapp':
+        setFilters({
+          startDate: uniqueValues.minDate,
+          endDate: uniqueValues.maxDate,
+          cityTier: 'All',
+          city: 'All',
+          language: 'All',
+          category: 'All',
+          channel: 'WhatsApp Share',
+        });
+        break;
+      case 'delivery':
+        setFilters({
+          startDate: uniqueValues.minDate,
+          endDate: uniqueValues.maxDate,
+          cityTier: 'All',
+          city: 'All',
+          language: 'All',
+          category: 'Delivery & Logistics',
+          channel: 'All',
+        });
+        break;
+      default:
+        handleResetFilters();
+    }
+  };
+
   // Memoized client-side filtering across 29k rows (< 20ms)
   const filteredData = useMemo(() => {
     return data.filter((row) => {
@@ -121,6 +173,60 @@ export const App: React.FC = () => {
   const nagpurData = useMemo(() => calculateNagpurTrend(data), [data]);
   const salaryBandData = useMemo(() => calculateSalaryBandBreakdown(filteredData), [filteredData]);
 
+  // Full filtered records CSV export
+  const handleExportFilteredCSV = () => {
+    if (filteredData.length === 0) return;
+    const headers = [
+      'view_id',
+      'view_date',
+      'city',
+      'city_tier',
+      'language',
+      'category',
+      'salary_band',
+      'posted_day_type',
+      'employer_verified',
+      'acquisition_channel',
+      'applied',
+      'recruiter_viewed',
+      'responded',
+      'interviewed',
+      'hired',
+      'hours_to_first_response',
+    ];
+
+    const rows = filteredData.map((r) => [
+      r.view_id,
+      r.view_date,
+      r.city,
+      r.city_tier,
+      r.language,
+      `"${r.category}"`,
+      r.salary_band,
+      r.posted_day_type,
+      r.employer_verified,
+      `"${r.acquisition_channel}"`,
+      r.applied,
+      r.recruiter_viewed,
+      r.responded,
+      r.interviewed,
+      r.hired,
+      r.hours_to_first_response ?? '',
+    ]);
+
+    const csvContent =
+      'data:text/csv;charset=utf-8,' +
+      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `hiring_funnel_filtered_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
       <Header
@@ -135,6 +241,7 @@ export const App: React.FC = () => {
           setFilters={setFilters}
           uniqueValues={uniqueValues}
           onReset={handleResetFilters}
+          onApplyPreset={handleApplyPreset}
         />
 
         <main className="flex-1 p-6 overflow-y-auto">
@@ -217,6 +324,7 @@ export const App: React.FC = () => {
                   dayTypeData={dayTypeData}
                   nagpurData={nagpurData}
                   salaryBandData={salaryBandData}
+                  onExportFilteredCSV={handleExportFilteredCSV}
                 />
               )}
               {activeTab === 'insights' && <InsightsTab />}

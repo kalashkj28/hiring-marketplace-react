@@ -10,6 +10,19 @@ A high-performance, responsive analytics dashboard for a hyperlocal, vernacular 
 
 ---
 
+## 🌟 Bonus Section: User-Focused Creative Enhancements
+
+To go beyond standard dashboard requirements, four user-centric features were designed by putting ourselves in the shoes of **Product Managers**, **City Operations Leads**, and **Executive Decision Makers**:
+
+| Feature Added | Target Persona | User Pain Point Solved | How It Enhances Experience & Business Impact |
+|---|---|---|---|
+| **1. What-If Marketplace ROI Simulator** | Executive / Product Leads | Static dashboards show past numbers, but leaders ask *"What is the projected ROI if we take action?"* | An interactive slider tool that models the real-world impact of increasing employer verification (from 60% baseline to 80%+) and reducing response latency. Dynamically calculates **Projected Additional Hires** and **Net Efficiency Lift**. |
+| **2. Step-to-Step Drop-Off & Conversion %** | Growth & Funnel PMs | Normal funnels only show "% of total views". Users cannot quickly spot which transition stage leaks the most candidates. | Added Amplitude/Mixpanel-style step-to-step conversion badges (e.g. `19.8% View→Apply`, `75.7% Apply→Recruiter View`) along with explicit drop-off warnings (e.g. `↓ 42.6% drop` between recruiter review and response). |
+| **3. 1-Click Investigation Presets** | City Ops & Regional Leads | Manually adjusting date sliders and 5 dropdowns to examine known business anomalies causes multi-click fatigue. | One-click shortcut presets for: **Nagpur July Dip**, **Tier-3 Deep Dive**, **WhatsApp Intent Channel**, and **Delivery Category**. Instant filtered perspective in one click. |
+| **4. Instant Search & Dual-Level CSV Export** | Data Analysts & Field Ops | Business users often need to export specific cohorts into Excel for regional field-team distribution or reporting. | Added live **City Search bar** (instant debounce filtering across 21 cities) and **One-Click CSV Export** (both aggregated city table and granular row-level data). |
+
+---
+
 ## Architecture & Tech Stack
 
 ```
@@ -20,11 +33,12 @@ Vite + React 18 (TypeScript)
         │
         ├── Client-Side In-Memory Filtering (< 20ms across 29k rows via useMemo)
         ├── Dynamic KPIs & Metric Derivations
+        ├── Interactive What-If ROI Simulation Engine
         │
         ▼
 Tailwind CSS + Recharts UI
-  ├── Overview Tab (KPIs, 6-Stage Funnel, Weekly Trends)
-  ├── Segments Tab (City Table, Category, Verified Status, Nagpur Dip)
+  ├── Overview Tab (KPIs, 6-Stage Step-by-Step Funnel, Weekly Trends, ROI Simulator)
+  ├── Segments Tab (Searchable City Table, Category, Verified Status, Nagpur Dip, CSV Exports)
   └── Insights Tab (Actionable Findings & SQL Evidence)
 ```
 
@@ -62,19 +76,6 @@ The headline funnel counts were independently validated against SQL queries run 
 4. **Weekend postings get weaker response:** 36.6% response rate vs 46.0% for weekday postings.
 5. **WhatsApp Share brings the highest applicant intent:** 25.1% view-to-apply vs 15.7% for Paid Ads.
 6. **Nagpur experienced a 2-week application dip in July:** Dropped to ~6-9% apply rate (days 40-54) while peer cities (Nashik, Patna) remained stable.
-
----
-
-## Features
-
-- **Live Data Sync:** Button to re-fetch live records from Google Sheets on demand.
-- **Instant Client-Side Filtering:** Date Range, City Tier, City, Language, Category, and Acquisition Channel filters recalculate metrics in under 20ms without network roundtrips.
-- **Interactive Visualizations:**
-  - 6-Stage Funnel drop-off visualization with exact percentages
-  - Volume trends & conversion rate stability over time
-  - City performance table with inline progress bars
-  - Nagpur dual-axis volume vs conversion chart with highlighted anomaly region
-- **Expandable Insights:** Tactical business recommendations and impact measurement frameworks for each key finding.
 
 ---
 

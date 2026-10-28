@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   CityMetricItem,
   CategoryMetricItem,
@@ -22,6 +22,7 @@ import {
   ComposedChart,
   ReferenceArea,
 } from 'recharts';
+import { Search, Download } from 'lucide-react';
 
 interface SegmentsTabProps {
   cityData: CityMetricItem[];
@@ -32,6 +33,7 @@ interface SegmentsTabProps {
   dayTypeData: DayTypeMetricItem[];
   nagpurData: NagpurWeeklyItem[];
   salaryBandData: SalaryBandItem[];
+  onExportFilteredCSV?: () => void;
 }
 
 export const SegmentsTab: React.FC<SegmentsTabProps> = ({
@@ -43,18 +45,91 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
   dayTypeData,
   nagpurData,
   salaryBandData,
+  onExportFilteredCSV,
 }) => {
+  const [searchCity, setSearchCity] = useState<string>('');
+
+  const filteredCityData = useMemo(() => {
+    if (!searchCity.trim()) return cityData;
+    return cityData.filter((item) =>
+      item.city.toLowerCase().includes(searchCity.toLowerCase().trim())
+    );
+  }, [cityData, searchCity]);
+
+  // Client-side CSV export of city summary
+  const handleExportCityCSV = () => {
+    const headers = ['City', 'Tier', 'Views', 'Applications', 'View to Apply %', 'Response Rate %', 'Hire Rate %'];
+    const rows = filteredCityData.map((r) => [
+      r.city,
+      r.tier,
+      r.views,
+      r.applications,
+      `${r.viewToApplyPct}%`,
+      `${r.responseRatePct}%`,
+      `${r.hireRatePct}%`,
+    ]);
+
+    const csvContent =
+      'data:text/csv;charset=utf-8,' +
+      [headers.join(','), ...rows.map((e) => e.join(','))].join('\n');
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `city_performance_report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-6">
-      {/* 1. City-Level Table */}
+      {/* 1. City-Level Table with Search & Export */}
       <div className="bg-white p-5 rounded-lg border border-slate-200 shadow-sm">
-        <div className="mb-4">
-          <h3 className="text-base font-semibold text-slate-800">
-            City-level breakdown (sorted by worst view-to-apply)
-          </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Compare city funnel health, application conversion, and hire rates
-          </p>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
+          <div>
+            <h3 className="text-base font-semibold text-slate-800">
+              City-level breakdown (sorted by worst view-to-apply)
+            </h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Compare city funnel health, application conversion, and hire rates
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Search Bar */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search city..."
+                value={searchCity}
+                onChange={(e) => setSearchCity(e.target.value)}
+                className="pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs focus:ring-1 focus:ring-teal-500 focus:outline-none w-36 md:w-48"
+              />
+            </div>
+
+            {/* Export Button */}
+            <button
+              onClick={handleExportCityCSV}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
+              title="Download city table as CSV"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-600" />
+              <span>Export Table</span>
+            </button>
+
+            {onExportFilteredCSV && (
+              <button
+                onClick={onExportFilteredCSV}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-teal-700 bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-md transition-colors"
+                title="Download full filtered rows as CSV"
+              >
+                <Download className="w-3.5 h-3.5 text-teal-600" />
+                <span>Export All Records</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="overflow-x-auto max-h-96 border border-slate-200 rounded-lg">
@@ -72,7 +147,7 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {cityData.map((row, idx) => (
+              {filteredCityData.map((row, idx) => (
                 <tr key={row.city} className="hover:bg-slate-50/80 transition-colors">
                   <td className="px-3 py-2 text-slate-400 font-mono text-[11px]">{idx + 1}</td>
                   <td className="px-3 py-2 font-medium text-slate-800">{row.city}</td>
@@ -114,6 +189,13 @@ export const SegmentsTab: React.FC<SegmentsTabProps> = ({
                   <td className="px-3 py-2 text-right font-medium text-slate-700">{row.hireRatePct}%</td>
                 </tr>
               ))}
+              {filteredCityData.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="text-center py-6 text-slate-400">
+                    No cities matching "{searchCity}"
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
