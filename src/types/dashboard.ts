@@ -42,7 +42,6 @@ export interface HeadlineMetrics {
   responseRatePct: number;
   hireRatePct: number;
   avgHoursToRespond: number;
-  within24hPct: number;
 }
 
 export interface FunnelStageItem {

@@ -21,7 +21,6 @@ export function calculateHeadlineMetrics(records: FunnelRecord[]): HeadlineMetri
   let hires = 0;
   let totalHours = 0;
   let hoursCount = 0;
-  let within24Count = 0;
 
   for (const r of records) {
     if (r.applied) applications++;
@@ -32,9 +31,6 @@ export function calculateHeadlineMetrics(records: FunnelRecord[]): HeadlineMetri
     if (r.hours_to_first_response != null) {
       totalHours += r.hours_to_first_response;
       hoursCount++;
-      if (r.hours_to_first_response <= 24) {
-        within24Count++;
-      }
     }
   }
 
@@ -42,7 +38,6 @@ export function calculateHeadlineMetrics(records: FunnelRecord[]): HeadlineMetri
   const responseRatePct = applications > 0 ? Number(((responded / applications) * 100).toFixed(1)) : 0;
   const hireRatePct = applications > 0 ? Number(((hires / applications) * 100).toFixed(1)) : 0;
   const avgHoursToRespond = hoursCount > 0 ? Number((totalHours / hoursCount).toFixed(1)) : 0;
-  const within24hPct = applications > 0 ? Number(((within24Count / applications) * 100).toFixed(1)) : 0;
 
   return {
     views,
@@ -55,7 +50,6 @@ export function calculateHeadlineMetrics(records: FunnelRecord[]): HeadlineMetri
     responseRatePct,
     hireRatePct,
     avgHoursToRespond,
-    within24hPct,
   };
 }
 
