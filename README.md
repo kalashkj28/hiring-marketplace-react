@@ -1,6 +1,6 @@
 # Hiring Marketplace Analytics Dashboard (Local-First React + TypeScript + DuckDB-Wasm)
 
-> ⚠️ **Synthetic data for portfolio purposes only.** All data was generated using a Python script with fixed random seed (42). These are not real numbers or any real company's data.
+> **Synthetic data for portfolio purposes only.** All data was generated using a Python script with fixed random seed (42). These are not real numbers or any real company's data.
 
 A local-first analytics dashboard for a hyperlocal, vernacular job marketplace tracking the seeker journey from view to hire across 21 Tier-2 & Tier-3 cities.
 
@@ -10,7 +10,7 @@ A local-first analytics dashboard for a hyperlocal, vernacular job marketplace t
 
 ---
 
-## 🏛️ Local-First Architecture
+## Local-First Architecture
 
 The dashboard is built local-first: all user actions (filtering, aggregations, tab switching, searches, CSV exports) read strictly from an embedded, client-side SQL database (DuckDB-Wasm). The UI never makes a network request when the user interacts.
 
@@ -18,12 +18,12 @@ The dashboard is built local-first: all user actions (filtering, aggregations, t
 Google Sheet (Source of Truth)
         │
         ▼ (Pull-based Sync)
-Background Sync Engine (Web Worker)
+Sync Engine (Main Thread Fetch & Parse)
   ├── SHA-256 Content Hash Comparison
-  └── Single Transaction Diff (Insert / Update / Delete)
+  └── Single Transaction Diff Dispatch (Insert / Update / Delete)
         │
         ▼
-DuckDB WebAssembly (`opfs://hiring.duckdb`)
+DuckDB WebAssembly (`opfs://hiring.duckdb` in dedicated Web Worker)
   ├── Tables: `records`, `sync_state`
   ├── Persistent Storage: OPFS (Origin Private File System)
   └── Fallback: In-memory database if OPFS is unavailable
@@ -40,7 +40,7 @@ React 18 + Tailwind CSS + Recharts UI
 |---|---|---|
 | **Local Database** | DuckDB-Wasm (`@duckdb/duckdb-wasm`) | In-browser analytical SQL engine running in a dedicated Web Worker |
 | **Persistence** | OPFS (`opfs://hiring.duckdb`) | Persistent file storage in the browser with in-memory fallback |
-| **Sync Engine** | Background Pull-Sync (`syncEngine.ts`) | Periodic diffing from Google Sheet into local SQL tables |
+| **Sync Engine** | Pull-Sync (`syncEngine.ts`) | Event-driven differential sync from Google Sheet into local SQL tables |
 | **Frontend** | React 18, TypeScript, Vite | Strictly typed, reactive UI components |
 | **Styling** | Tailwind CSS | Clean, modern light-mode analytics styling |
 | **Visualizations** | Recharts | Interactive SVG charts (Funnel, Dual-Axis, Grouped Bars) |
@@ -48,21 +48,26 @@ React 18 + Tailwind CSS + Recharts UI
 
 ---
 
-## 🔄 How Synchronization Works (Pull-Based Sync)
+## How Synchronization Works (Pull-Based Sync)
 
 The sync engine follows a **pull-based** model:
 
-- **When sync triggers:**
-  1. On initial application load (checks if the local database has records).
-  2. In the background after initial render (checks if the upstream sheet changed).
-  3. When the browser regains an internet connection (`online` event).
-  4. Manually when the user clicks the **"Sync now"** button in the header.
+- **Threading model:** DuckDB executes inside a dedicated Web Worker (`AsyncDuckDB`) for non-blocking queries, while CSV fetching, SHA-256 calculation, and PapaParse parsing run on the main thread, dispatching batched SQL statements to the worker connection.
+- **Event-driven triggers:** Sync does not run on a polling timer. It triggers exclusively on:
+  1. Initial application load (checks if the local database has records).
+  2. Background verification after initial render (checks if the upstream sheet changed).
+  3. Browser reconnect (`online` event).
+  4. Manual click on the **"Sync now"** button in the header.
 - **Change detection:** The engine calculates a SHA-256 hash of the fetched CSV content and compares it with `content_hash` in `sync_state`. If the hash is identical, no table writes occur, avoiding unnecessary work.
-- **Differential updates:** If changes are detected, incoming rows are compared by `id` inside a single SQL transaction:
+- **Differential updates:** When changes are detected, incoming rows are compared against local storage in a temporary table inside a single SQL transaction:
   - Rows absent from the sheet are deleted from local storage.
-  - Rows with modified fields are updated.
+  - Rows with modified fields across any column are updated using SQL `IS DISTINCT FROM` comparison.
   - New rows are inserted.
   - A `CHECKPOINT` is executed to flush changes to the OPFS database file immediately.
+- **Concurrency control:** An in-flight promise guard ensures that multiple overlapping sync triggers (such as React StrictMode mounts or rapid button clicks) share a single execution rather than opening conflicting transactions.
+- **"Sync now" vs "Reset local data":**
+  - **Sync now:** Fetches the upstream sheet and applies an incremental diff (inserts, updates, deletes) to the local database without wiping data.
+  - **Reset local data:** Clears the local OPFS database file and executes a complete, fresh re-import from scratch.
 - **Sync scope and limitations:**
   - Sync is strictly **pull-only** (from Google Sheet to local DuckDB).
   - Writing changes back from the client to a remote server (push-sync, outbox queues, conflict resolution) is not implemented.
@@ -70,7 +75,7 @@ The sync engine follows a **pull-based** model:
 
 ---
 
-## 🌟 User-Focused Features
+## User-Focused Features
 
 | Feature Added | Target Persona | User Pain Point Solved | How It Enhances Experience & Business Impact |
 |---|---|---|---|
@@ -82,7 +87,7 @@ The sync engine follows a **pull-based** model:
 
 ---
 
-## Core Funnel & SQL Reconciliation
+## Core Funnel and SQL Reconciliation
 
 The headline funnel counts were validated against SQL queries run on the dataset:
 

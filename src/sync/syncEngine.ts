@@ -14,6 +14,12 @@ export interface SyncResult {
   error?: string;
 }
 
+export interface SyncOptions {
+  forceReload?: boolean;
+  bypassHashCheck?: boolean;
+  force?: boolean;
+}
+
 export async function computeSha256(text: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(text);
@@ -96,7 +102,31 @@ export async function getSyncMetadata(): Promise<{
   };
 }
 
-export async function syncFromGoogleSheet(options?: { force?: boolean }): Promise<SyncResult> {
+let inFlightSyncPromise: Promise<SyncResult> | null = null;
+
+export async function syncFromGoogleSheet(
+  options?: SyncOptions | { force?: boolean }
+): Promise<SyncResult> {
+  if (inFlightSyncPromise) {
+    console.log('[SyncEngine] Sync already in progress. Returning active in-flight sync promise.');
+    return inFlightSyncPromise;
+  }
+
+  inFlightSyncPromise = (async () => {
+    try {
+      return await executeSync(options);
+    } finally {
+      inFlightSyncPromise = null;
+    }
+  })();
+
+  return inFlightSyncPromise;
+}
+
+async function executeSync(options?: SyncOptions | { force?: boolean }): Promise<SyncResult> {
+  const isForceReload = !!(options && ('forceReload' in options ? options.forceReload : options.force));
+  const isBypassHashCheck = !!(options && 'bypassHashCheck' in options && options.bypassHashCheck);
+
   const { conn, isPersistent } = await getDb();
   const initialCount = await getTableRowCount();
   const now = new Date().toISOString();
@@ -133,8 +163,8 @@ export async function syncFromGoogleSheet(options?: { force?: boolean }): Promis
   const newHash = await computeSha256(csvText);
   const currentMeta = await getSyncMetadata();
 
-  // Fast path: if content hash matches and table is populated, do nothing except timestamp
-  if (currentMeta.contentHash === newHash && initialCount > 0 && !options?.force) {
+  // Fast path: if content hash matches, table is populated, and no force/bypass requested, update timestamp only
+  if (currentMeta.contentHash === newHash && initialCount > 0 && !isForceReload && !isBypassHashCheck) {
     console.log('[SyncEngine] CSV content hash unchanged. Updating last_synced_at timestamp.');
     await conn.query(`INSERT OR REPLACE INTO sync_state VALUES ('last_synced_at', '${now}');`);
     if (isPersistent) {
@@ -155,12 +185,19 @@ export async function syncFromGoogleSheet(options?: { force?: boolean }): Promis
       complete: (results) => {
         const rows: ParsedRow[] = results.data
           .filter((row) => row.journey_id || row.view_id || row.seeker_id || row.city)
-          .map((row) => {
-            const rowId = (row.journey_id || row.view_id || '').trim();
+          .map((row, index) => {
+            let rowId = (row.journey_id || row.view_id || '').trim();
+            if (!rowId) {
+              // Deterministic synthetic fallback if both journey_id and view_id are blank
+              const naturalKey = `${row.view_date}_${row.city}_${row.seeker_id}_${row.job_id}_${row.category}_${index}`;
+              rowId = `row_${naturalKey}`;
+            }
+
             const hrs =
               row.hours_to_first_response !== '' && row.hours_to_first_response != null
                 ? parseFloat(row.hours_to_first_response)
                 : null;
+
             return {
               id: rowId,
               journey_id: row.journey_id || rowId,
@@ -195,9 +232,9 @@ export async function syncFromGoogleSheet(options?: { force?: boolean }): Promis
 
   console.log(`[SyncEngine] Parsed ${parsedRecords.length.toLocaleString()} rows from Sheet.`);
 
-  // If local DB is empty (First-time load)
-  if (initialCount === 0 || options?.force) {
-    console.log('[SyncEngine] Populating initial records table...');
+  // If local DB is empty or explicit force reload requested (Full Load path)
+  if (initialCount === 0 || isForceReload) {
+    console.log('[SyncEngine] Populating initial records table (Full Load)...');
     await conn.query('BEGIN TRANSACTION;');
     try {
       await conn.query('DELETE FROM records;');
@@ -211,7 +248,7 @@ export async function syncFromGoogleSheet(options?: { force?: boolean }): Promis
       throw insertErr;
     }
   } else {
-    // Incremental diff sync inside a single transaction
+    // Incremental diff sync inside a single transaction (Diffing path)
     console.log('[SyncEngine] Performing incremental diff sync via temp table...');
     await conn.query('CREATE TEMP TABLE temp_incoming AS SELECT * FROM records WHERE 1=0;');
     try {
@@ -221,9 +258,11 @@ export async function syncFromGoogleSheet(options?: { force?: boolean }): Promis
       // 1. Delete rows no longer present in sheet
       await conn.query('DELETE FROM records WHERE id NOT IN (SELECT id FROM temp_incoming);');
 
-      // 2. Update existing modified rows
+      // 2. Update existing modified rows comparing all relevant data columns
       await conn.query(`
         UPDATE records SET
+          journey_id = temp_incoming.journey_id,
+          view_id = temp_incoming.view_id,
           seeker_id = temp_incoming.seeker_id,
           job_id = temp_incoming.job_id,
           employer_id = temp_incoming.employer_id,
@@ -248,12 +287,28 @@ export async function syncFromGoogleSheet(options?: { force?: boolean }): Promis
         FROM temp_incoming
         WHERE records.id = temp_incoming.id
           AND (
-            records.applied != temp_incoming.applied OR
-            records.recruiter_viewed != temp_incoming.recruiter_viewed OR
-            records.responded != temp_incoming.responded OR
-            records.interviewed != temp_incoming.interviewed OR
-            records.hired != temp_incoming.hired OR
-            records.hours_to_first_response IS DISTINCT FROM temp_incoming.hours_to_first_response
+            records.journey_id IS DISTINCT FROM temp_incoming.journey_id OR
+            records.view_id IS DISTINCT FROM temp_incoming.view_id OR
+            records.seeker_id IS DISTINCT FROM temp_incoming.seeker_id OR
+            records.job_id IS DISTINCT FROM temp_incoming.job_id OR
+            records.employer_id IS DISTINCT FROM temp_incoming.employer_id OR
+            records.view_date IS DISTINCT FROM temp_incoming.view_date OR
+            records.view_week IS DISTINCT FROM temp_incoming.view_week OR
+            records.city IS DISTINCT FROM temp_incoming.city OR
+            records.city_tier IS DISTINCT FROM temp_incoming.city_tier OR
+            records.language IS DISTINCT FROM temp_incoming.language OR
+            records.category IS DISTINCT FROM temp_incoming.category OR
+            records.salary_band IS DISTINCT FROM temp_incoming.salary_band OR
+            records.posted_day_type IS DISTINCT FROM temp_incoming.posted_day_type OR
+            records.employer_verified IS DISTINCT FROM temp_incoming.employer_verified OR
+            records.acquisition_channel IS DISTINCT FROM temp_incoming.acquisition_channel OR
+            records.applied IS DISTINCT FROM temp_incoming.applied OR
+            records.recruiter_viewed IS DISTINCT FROM temp_incoming.recruiter_viewed OR
+            records.responded IS DISTINCT FROM temp_incoming.responded OR
+            records.interviewed IS DISTINCT FROM temp_incoming.interviewed OR
+            records.hired IS DISTINCT FROM temp_incoming.hired OR
+            records.hours_to_first_response IS DISTINCT FROM temp_incoming.hours_to_first_response OR
+            records.furthest_stage IS DISTINCT FROM temp_incoming.furthest_stage
           );
       `);
 

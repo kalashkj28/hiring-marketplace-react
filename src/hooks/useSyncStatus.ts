@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { SyncStatus, syncFromGoogleSheet, getSyncMetadata } from '../sync/syncEngine';
+import { SyncStatus, SyncOptions, syncFromGoogleSheet, getSyncMetadata } from '../sync/syncEngine';
 
 export const dataRevisionEmitter = new EventTarget();
 
@@ -13,7 +13,7 @@ export interface UseSyncStatusReturn {
   rowCount: number;
   isOnline: boolean;
   syncError: string | null;
-  triggerSync: (force?: boolean) => Promise<void>;
+  triggerSync: (options?: SyncOptions | boolean) => Promise<void>;
 }
 
 export function useSyncStatus(isDbReady: boolean): UseSyncStatusReturn {
@@ -59,7 +59,7 @@ export function useSyncStatus(isDbReady: boolean): UseSyncStatusReturn {
   }, [isDbReady]);
 
   const triggerSync = useCallback(
-    async (force = false) => {
+    async (options?: SyncOptions | boolean) => {
       if (!isDbReady) return;
 
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -71,7 +71,12 @@ export function useSyncStatus(isDbReady: boolean): UseSyncStatusReturn {
       setSyncError(null);
 
       try {
-        const result = await syncFromGoogleSheet({ force });
+        const syncOpts: SyncOptions =
+          typeof options === 'boolean'
+            ? { forceReload: options }
+            : options || {};
+
+        const result = await syncFromGoogleSheet(syncOpts);
         if (result.status === 'offline') {
           setSyncStatus('offline');
           if (result.error) setSyncError(result.error);

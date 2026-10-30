@@ -110,11 +110,11 @@ export const App: React.FC = () => {
       setCurrentDbRowCount(count);
       if (count === 0) {
         console.log('[App] Local database is empty. Triggering initial sync from Google Sheet...');
-        triggerSync(true);
+        triggerSync({ forceReload: true });
       } else {
         console.log(`[App] Instant startup: ${count.toLocaleString()} records loaded from local DuckDB storage.`);
         // Background sync check without blocking the UI
-        triggerSync(false);
+        triggerSync();
       }
     });
   }, [isDbReady, triggerSync]);
@@ -322,7 +322,7 @@ export const App: React.FC = () => {
     if (window.confirm('Reset local DuckDB storage and re-sync from Google Sheets?')) {
       await resetLocalDb();
       setDataRevision((r) => r + 1);
-      triggerSync(true);
+      triggerSync({ forceReload: true });
     }
   };
 
@@ -332,7 +332,7 @@ export const App: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
       <Analytics />
       <Header
-        onSyncNow={() => triggerSync(true)}
+        onSyncNow={() => triggerSync({ bypassHashCheck: true })}
         syncStatus={syncStatus}
         lastSyncedAt={lastSyncedAt}
         totalRecordsCount={currentDbRowCount}
