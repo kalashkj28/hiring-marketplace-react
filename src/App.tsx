@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import { FunnelRecord, FilterState } from './types/dashboard';
 import { fetchFunnelData } from './utils/dataFetcher';
 import {
@@ -229,6 +230,7 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
+      <Analytics />
       <Header
         onRefresh={loadData}
         isLoading={isLoading}
