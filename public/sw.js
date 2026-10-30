@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hiring-marketplace-v2';
+const CACHE_NAME = 'hiring-marketplace-v3';
 
 const PRECACHE_ASSETS = [
   '/',
@@ -32,62 +32,77 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // Silently handle Vercel analytics when offline
+  if (url.pathname.includes('/_vercel/insights') || url.pathname.includes('/_vercel/speed-insights')) {
+    if (!navigator.onLine) {
+      event.respondWith(new Response(null, { status: 204 }));
+      return;
+    }
+  }
+
   // Only intercept same-origin GET requests
   if (event.request.method !== 'GET') return;
   if (url.origin !== self.location.origin) return;
 
-  // Navigation requests: Network-First with Cache Fallback
+  // Navigation requests (HTML documents)
   if (event.request.mode === 'navigate') {
     event.respondWith(
-      fetch(event.request)
-        .then((networkResponse) => {
+      (async () => {
+        // If offline, serve directly from cache without attempting network fetch
+        if (!navigator.onLine) {
+          const cached = (await caches.match(event.request)) || (await caches.match('/')) || (await caches.match('/index.html'));
+          if (cached) return cached;
+        }
+
+        try {
+          const networkResponse = await fetch(event.request);
           if (networkResponse && networkResponse.status === 200) {
             const clone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            const cache = await caches.open(CACHE_NAME);
+            cache.put(event.request, clone);
           }
           return networkResponse;
-        })
-        .catch(async () => {
-          const cached = await caches.match(event.request);
-          if (cached) return cached;
-          const rootCached = await caches.match('/');
-          if (rootCached) return rootCached;
-          const indexCached = await caches.match('/index.html');
-          return indexCached || new Response('Offline', { status: 503 });
-        })
+        } catch {
+          const cached = (await caches.match(event.request)) || (await caches.match('/')) || (await caches.match('/index.html'));
+          return cached || new Response('Offline', { status: 503 });
+        }
+      })()
     );
     return;
   }
 
-  // Static assets (JS, CSS, WASM, Workers, Fonts, Images): Cache-First with Network Fallback
+  // Static assets (JS, CSS, WASM, Workers, Fonts, Images)
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
+    (async () => {
+      const cachedResponse = await caches.match(event.request);
       if (cachedResponse) {
-        // Return cached immediately; optionally revalidate in background
-        fetch(event.request)
-          .then((networkResponse) => {
-            if (networkResponse && networkResponse.status === 200) {
-              caches.open(CACHE_NAME).then((cache) => cache.put(event.request, networkResponse));
-            }
-          })
-          .catch(() => {
-            // Expected when offline
-          });
+        // Only revalidate against network if browser is online
+        if (navigator.onLine) {
+          fetch(event.request)
+            .then(async (networkResponse) => {
+              if (networkResponse && networkResponse.status === 200) {
+                const cache = await caches.open(CACHE_NAME);
+                cache.put(event.request, networkResponse);
+              }
+            })
+            .catch(() => {});
+        }
         return cachedResponse;
       }
 
-      return fetch(event.request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const clone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return networkResponse;
-        })
-        .catch((err) => {
-          console.warn('[SW] Offline fetch fallback failed for:', event.request.url);
-          throw err;
-        });
-    })
+      // Not cached: fetch and cache if online
+      try {
+        const networkResponse = await fetch(event.request);
+        if (networkResponse && networkResponse.status === 200) {
+          const clone = networkResponse.clone();
+          const cache = await caches.open(CACHE_NAME);
+          cache.put(event.request, clone);
+        }
+        return networkResponse;
+      } catch (err) {
+        console.warn('[SW] Offline resource unavailable:', event.request.url);
+        throw err;
+      }
+    })()
   );
 });
