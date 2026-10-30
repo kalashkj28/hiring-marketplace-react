@@ -1,33 +1,42 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Analytics } from '@vercel/analytics/react';
-import { FunnelRecord, FilterState } from './types/dashboard';
-import { fetchFunnelData } from './utils/dataFetcher';
-import {
-  calculateHeadlineMetrics,
-  calculateFunnelStages,
-  calculateWeeklyTrends,
-  calculateCityBreakdown,
-  calculateTierBreakdown,
-  calculateCategoryBreakdown,
-  calculateVerifiedBreakdown,
-  calculateChannelBreakdown,
-  calculateDayTypeBreakdown,
-  calculateNagpurTrend,
-  calculateSalaryBandBreakdown,
-} from './utils/aggregations';
+import { FilterState, HeadlineMetrics, FunnelStageItem, WeeklyTrendItem, CityMetricItem, CategoryMetricItem, VerifiedMetricItem, ChannelMetricItem, DayTypeMetricItem, NagpurWeeklyItem, SalaryBandItem } from './types/dashboard';
 import { Header } from './components/Header';
 import { SidebarFilters } from './components/SidebarFilters';
 import { OverviewTab } from './components/OverviewTab';
 import { SegmentsTab } from './components/SegmentsTab';
 import { InsightsTab } from './components/InsightsTab';
-import { Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, HardDrive } from 'lucide-react';
+import { useLocalDb } from './hooks/useLocalDb';
+import { useSyncStatus, dataRevisionEmitter } from './hooks/useSyncStatus';
+import { resetLocalDb } from './db/client';
+import {
+  fetchUniqueFilterValues,
+  queryHeadlineMetrics,
+  buildFunnelStages,
+  queryWeeklyTrends,
+  queryCityBreakdown,
+  queryTierBreakdown,
+  queryCategoryBreakdown,
+  queryVerifiedBreakdown,
+  queryChannelBreakdown,
+  queryDayTypeBreakdown,
+  queryNagpurTrend,
+  querySalaryBandBreakdown,
+  queryFilteredRecordsForExport,
+  getTableRowCount,
+} from './db/queries';
 
 export const App: React.FC = () => {
-  const [data, setData] = useState<FunnelRecord[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'overview' | 'segments' | 'insights'>('overview');
+  const { isReady: isDbReady, isPersistent, error: dbError } = useLocalDb();
+  const { syncStatus, lastSyncedAt, rowCount: syncRowCount, triggerSync, syncError } = useSyncStatus(isDbReady);
 
+  const [activeTab, setActiveTab] = useState<'overview' | 'segments' | 'insights'>('overview');
+  const [dataRevision, setDataRevision] = useState<number>(0);
+  const [isQueryLoading, setIsQueryLoading] = useState<boolean>(true);
+  const [currentDbRowCount, setCurrentDbRowCount] = useState<number>(0);
+
+  // Filter state
   const [filters, setFilters] = useState<FilterState>({
     startDate: '',
     endDate: '',
@@ -38,47 +47,157 @@ export const App: React.FC = () => {
     channel: 'All',
   });
 
-  const loadData = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const records = await fetchFunnelData();
-      setData(records);
+  const [uniqueValues, setUniqueValues] = useState<{
+    tiers: string[];
+    cities: string[];
+    languages: string[];
+    categories: string[];
+    channels: string[];
+    minDate: string;
+    maxDate: string;
+  }>({
+    tiers: [],
+    cities: [],
+    languages: [],
+    categories: [],
+    channels: [],
+    minDate: '',
+    maxDate: '',
+  });
 
-      // Initialize date bounds
-      const dates = records.map((r) => r.view_date).filter(Boolean).sort();
-      if (dates.length > 0) {
-        setFilters((prev) => ({
-          ...prev,
-          startDate: dates[0],
-          endDate: dates[dates.length - 1],
-        }));
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to fetch Google Sheets CSV data.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Query Result State (Loaded directly from DuckDB SQL)
+  const [headlineMetrics, setHeadlineMetrics] = useState<HeadlineMetrics>({
+    views: 0,
+    applications: 0,
+    recruiterViews: 0,
+    responded: 0,
+    interviews: 0,
+    hires: 0,
+    viewToApplyPct: 0,
+    responseRatePct: 0,
+    hireRatePct: 0,
+    avgHoursToRespond: 0,
+  });
+  const [funnelStages, setFunnelStages] = useState<FunnelStageItem[]>([]);
+  const [weeklyTrends, setWeeklyTrends] = useState<WeeklyTrendItem[]>([]);
+  const [cityData, setCityData] = useState<CityMetricItem[]>([]);
+  const [tierData, setTierData] = useState<{ tier: string; viewToApplyPct: number; color: string }[]>([]);
+  const [categoryData, setCategoryData] = useState<CategoryMetricItem[]>([]);
+  const [verifiedData, setVerifiedData] = useState<VerifiedMetricItem[]>([]);
+  const [channelData, setChannelData] = useState<ChannelMetricItem[]>([]);
+  const [dayTypeData, setDayTypeData] = useState<DayTypeMetricItem[]>([]);
+  const [nagpurData, setNagpurData] = useState<NagpurWeeklyItem[]>([]);
+  const [salaryBandData, setSalaryBandData] = useState<SalaryBandItem[]>([]);
 
+  // Listen to background sync notifications
   useEffect(() => {
-    loadData();
+    const handleDataChanged = () => {
+      setDataRevision((r) => r + 1);
+    };
+    dataRevisionEmitter.addEventListener('change', handleDataChanged);
+    return () => {
+      dataRevisionEmitter.removeEventListener('change', handleDataChanged);
+    };
   }, []);
 
-  // Compute unique dropdown values
-  const uniqueValues = useMemo(() => {
-    const tiers = Array.from(new Set(data.map((r) => r.city_tier))).filter(Boolean).sort();
-    const cities = Array.from(new Set(data.map((r) => r.city))).filter(Boolean).sort();
-    const languages = Array.from(new Set(data.map((r) => r.language))).filter(Boolean).sort();
-    const categories = Array.from(new Set(data.map((r) => r.category))).filter(Boolean).sort();
-    const channels = Array.from(new Set(data.map((r) => r.acquisition_channel))).filter(Boolean).sort();
+  // Initial startup: check if local DB has records
+  // If records exist, render immediately from local storage (Step 4: Instant open)
+  // If empty, trigger initial sync
+  useEffect(() => {
+    if (!isDbReady) return;
 
-    const dates = data.map((r) => r.view_date).filter(Boolean).sort();
-    const minDate = dates[0] || '';
-    const maxDate = dates[dates.length - 1] || '';
+    getTableRowCount().then((count) => {
+      setCurrentDbRowCount(count);
+      if (count === 0) {
+        console.log('[App] Local database is empty. Triggering initial sync from Google Sheet...');
+        triggerSync(true);
+      } else {
+        console.log(`[App] Instant startup: ${count.toLocaleString()} records loaded from local DuckDB storage.`);
+        // Background sync check without blocking the UI
+        triggerSync(false);
+      }
+    });
+  }, [isDbReady, triggerSync]);
 
-    return { tiers, cities, languages, categories, channels, minDate, maxDate };
-  }, [data]);
+  // Load unique filter options once DB has data or updates
+  useEffect(() => {
+    if (!isDbReady) return;
+    fetchUniqueFilterValues()
+      .then((uv) => {
+        setUniqueValues(uv);
+        setFilters((prev) => {
+          // Keep current dates if already set, otherwise initialize with dataset bounds
+          if (!prev.startDate && uv.minDate) {
+            return {
+              ...prev,
+              startDate: uv.minDate,
+              endDate: uv.maxDate,
+            };
+          }
+          return prev;
+        });
+      })
+      .catch((err) => console.error('[App] Failed to load filter options:', err));
+  }, [isDbReady, dataRevision, syncRowCount]);
+
+  // Execute all SQL queries on local DuckDB whenever filters or data revision change
+  const executeQueries = useCallback(async () => {
+    if (!isDbReady) return;
+
+    const count = await getTableRowCount();
+    setCurrentDbRowCount(count);
+    if (count === 0) {
+      setIsQueryLoading(false);
+      return;
+    }
+
+    setIsQueryLoading(true);
+    try {
+      const [
+        metrics,
+        weekly,
+        cities,
+        tiers,
+        categories,
+        verified,
+        channels,
+        dayTypes,
+        nagpur,
+        salaryBands,
+      ] = await Promise.all([
+        queryHeadlineMetrics(filters),
+        queryWeeklyTrends(filters),
+        queryCityBreakdown(filters),
+        queryTierBreakdown(filters),
+        queryCategoryBreakdown(filters),
+        queryVerifiedBreakdown(filters),
+        queryChannelBreakdown(filters),
+        queryDayTypeBreakdown(filters),
+        queryNagpurTrend(),
+        querySalaryBandBreakdown(filters),
+      ]);
+
+      setHeadlineMetrics(metrics);
+      setFunnelStages(buildFunnelStages(metrics));
+      setWeeklyTrends(weekly);
+      setCityData(cities);
+      setTierData(tiers);
+      setCategoryData(categories);
+      setVerifiedData(verified);
+      setChannelData(channels);
+      setDayTypeData(dayTypes);
+      setNagpurData(nagpur);
+      setSalaryBandData(salaryBands);
+    } catch (err) {
+      console.error('[App] Error executing local DuckDB queries:', err);
+    } finally {
+      setIsQueryLoading(false);
+    }
+  }, [isDbReady, filters]);
+
+  useEffect(() => {
+    executeQueries();
+  }, [executeQueries, dataRevision]);
 
   const handleResetFilters = () => {
     setFilters({
@@ -92,7 +211,6 @@ export const App: React.FC = () => {
     });
   };
 
-  // Quick Presets Handler
   const handleApplyPreset = (presetName: string) => {
     switch (presetName) {
       case 'nagpur_dip':
@@ -144,41 +262,13 @@ export const App: React.FC = () => {
     }
   };
 
-  // Memoized client-side filtering across 29k rows (< 20ms)
-  const filteredData = useMemo(() => {
-    return data.filter((row) => {
-      if (filters.startDate && row.view_date < filters.startDate) return false;
-      if (filters.endDate && row.view_date > filters.endDate) return false;
-      if (filters.cityTier !== 'All' && row.city_tier !== filters.cityTier) return false;
-      if (filters.city !== 'All' && row.city !== filters.city) return false;
-      if (filters.language !== 'All' && row.language !== filters.language) return false;
-      if (filters.category !== 'All' && row.category !== filters.category) return false;
-      if (filters.channel !== 'All' && row.acquisition_channel !== filters.channel) return false;
-      return true;
-    });
-  }, [data, filters]);
+  // Full filtered records CSV export (Queried locally from DuckDB - zero network request!)
+  const handleExportFilteredCSV = async () => {
+    const records = await queryFilteredRecordsForExport(filters);
+    if (records.length === 0) return;
 
-  // Derived metrics
-  const headlineMetrics = useMemo(() => calculateHeadlineMetrics(filteredData), [filteredData]);
-  const funnelStages = useMemo(
-    () => calculateFunnelStages(headlineMetrics),
-    [headlineMetrics]
-  );
-  const weeklyTrends = useMemo(() => calculateWeeklyTrends(filteredData), [filteredData]);
-  const cityData = useMemo(() => calculateCityBreakdown(filteredData), [filteredData]);
-  const tierData = useMemo(() => calculateTierBreakdown(filteredData), [filteredData]);
-  const categoryData = useMemo(() => calculateCategoryBreakdown(filteredData), [filteredData]);
-  const verifiedData = useMemo(() => calculateVerifiedBreakdown(filteredData), [filteredData]);
-  const channelData = useMemo(() => calculateChannelBreakdown(filteredData), [filteredData]);
-  const dayTypeData = useMemo(() => calculateDayTypeBreakdown(filteredData), [filteredData]);
-  const nagpurData = useMemo(() => calculateNagpurTrend(data), [data]);
-  const salaryBandData = useMemo(() => calculateSalaryBandBreakdown(filteredData), [filteredData]);
-
-  // Full filtered records CSV export
-  const handleExportFilteredCSV = () => {
-    if (filteredData.length === 0) return;
     const headers = [
-      'view_id',
+      'id',
       'view_date',
       'city',
       'city_tier',
@@ -196,8 +286,8 @@ export const App: React.FC = () => {
       'hours_to_first_response',
     ];
 
-    const rows = filteredData.map((r) => [
-      r.view_id,
+    const rows = records.map((r) => [
+      r.id,
       r.view_date,
       r.city,
       r.city_tier,
@@ -228,14 +318,39 @@ export const App: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  const handleResetDb = async () => {
+    if (window.confirm('Reset local DuckDB storage and re-sync from Google Sheets?')) {
+      await resetLocalDb();
+      setDataRevision((r) => r + 1);
+      triggerSync(true);
+    }
+  };
+
+  const isInitialLoading = !isDbReady || (currentDbRowCount === 0 && syncStatus === 'syncing');
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800">
       <Analytics />
       <Header
-        onRefresh={loadData}
-        isLoading={isLoading}
-        totalRecordsCount={data.length}
+        onSyncNow={() => triggerSync(true)}
+        syncStatus={syncStatus}
+        lastSyncedAt={lastSyncedAt}
+        totalRecordsCount={currentDbRowCount}
+        isPersistent={isPersistent}
+        onResetDb={handleResetDb}
       />
+
+      {/* Notice if OPFS is unavailable and running in-memory */}
+      {!isPersistent && isDbReady && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-800 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <HardDrive className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Note:</strong> Persistent OPFS storage is not supported in this browser. Running in-memory mode (data will refresh from Google Sheets on tab reload).
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col lg:flex-row max-w-7xl w-full mx-auto">
         <SidebarFilters
@@ -281,34 +396,34 @@ export const App: React.FC = () => {
             </button>
           </div>
 
-          {/* Loading state */}
-          {isLoading && data.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-24 gap-3 bg-white rounded-lg border border-slate-200">
+          {/* First-time Loading state (only shown if local DB is empty) */}
+          {isInitialLoading && (
+            <div className="flex flex-col items-center justify-center py-24 gap-3 bg-white rounded-lg border border-slate-200 shadow-sm">
               <Loader2 className="w-8 h-8 text-teal-600 animate-spin" />
-              <p className="text-sm font-medium text-slate-600">Fetching live dataset from Google Sheets...</p>
-              <p className="text-xs text-slate-400">Loading ~29,000 funnel records</p>
+              <p className="text-sm font-medium text-slate-700">Initial sync from Google Sheets into local DuckDB...</p>
+              <p className="text-xs text-slate-400">Loading and indexing ~29,000 records in browser WebAssembly</p>
             </div>
           )}
 
-          {/* Error state */}
-          {error && (
+          {/* Sync or DB Error Banner */}
+          {(dbError || syncError) && (
             <div className="p-4 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs flex items-center justify-between mb-6">
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 shrink-0 text-rose-500" />
-                <span>{error}</span>
+                <span>{dbError || syncError}</span>
               </div>
               <button
-                onClick={loadData}
+                onClick={() => triggerSync(true)}
                 className="px-2.5 py-1 bg-rose-600 text-white rounded font-medium hover:bg-rose-700 transition"
               >
-                Retry
+                Retry Sync
               </button>
             </div>
           )}
 
-          {/* Tab Contents */}
-          {(!isLoading || data.length > 0) && (
-            <>
+          {/* Dashboard View (Rendered directly from DuckDB SQL query results) */}
+          {!isInitialLoading && currentDbRowCount > 0 && (
+            <div className={`transition-opacity duration-200 ${isQueryLoading ? 'opacity-70' : 'opacity-100'}`}>
               {activeTab === 'overview' && (
                 <OverviewTab
                   metrics={headlineMetrics}
@@ -330,7 +445,7 @@ export const App: React.FC = () => {
                 />
               )}
               {activeTab === 'insights' && <InsightsTab />}
-            </>
+            </div>
           )}
         </main>
       </div>
